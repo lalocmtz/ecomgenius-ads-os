@@ -210,8 +210,8 @@ export default function UploadPage() {
           <li>Exportar a CSV y subirlo aquí.</li>
         </ol>
         <p className="mt-3 text-xs text-text-muted">
-          Si subes un export agregado (sin "Día"), igual lo aceptamos y convertimos MXN→USD,
-          pero pierdes detección de "sostenido 5 días" para escalamientos.
+          Si subes un export agregado (sin &quot;Día&quot;), igual lo aceptamos y convertimos MXN→USD,
+          pero pierdes detección de &quot;sostenido 5 días&quot; para escalamientos.
         </p>
       </aside>
     </div>
