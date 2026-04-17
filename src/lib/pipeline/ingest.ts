@@ -22,6 +22,7 @@ import {
   adsetDailyStats,
   adAccounts,
   brandEconomics,
+  brands,
   csvUploads,
   recommendations,
 } from "@/lib/db/schema";
@@ -273,7 +274,7 @@ export async function ingestMetaRows(args: IngestArgs): Promise<IngestResult> {
       });
   }
 
-  // --- 6. Load brand economics → thresholds ---
+  // --- 6. Load brand economics + brand row → thresholds ---
   const [econ] = await db
     .select()
     .from(brandEconomics)
@@ -282,6 +283,15 @@ export async function ingestMetaRows(args: IngestArgs): Promise<IngestResult> {
     .limit(1);
   if (!econ) {
     throw new Error(`Brand ${brandId} has no economics configured`);
+  }
+
+  const [brandRow] = await db
+    .select({ exchangeRate: brands.exchangeRate })
+    .from(brands)
+    .where(eq(brands.id, brandId))
+    .limit(1);
+  if (!brandRow) {
+    throw new Error(`Brand ${brandId} not found`);
   }
 
   const thresholds = calculateBrandThresholds({
@@ -293,7 +303,7 @@ export async function ingestMetaRows(args: IngestArgs): Promise<IngestResult> {
     target_margin_pct: econ.targetMarginPct,
     min_roas: econ.minRoas,
     pieces_per_order: econ.piecesPerOrder,
-    exchange_rate: 17.5, // read from brand — TODO load brand
+    exchange_rate: brandRow.exchangeRate,
   });
 
   // --- 7. Run rules engine over ALL ads of the brand ---

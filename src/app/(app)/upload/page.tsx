@@ -2,7 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Upload as UploadIcon, FileSpreadsheet, Check, AlertCircle } from "lucide-react";
+import {
+  Upload as UploadIcon,
+  FileSpreadsheet,
+  Check,
+  AlertCircle,
+  Info,
+} from "lucide-react";
 import { Button } from "@/components/ui/Button";
 
 interface Brand {
@@ -11,20 +17,24 @@ interface Brand {
   name: string;
 }
 
+interface UploadResult {
+  ok: boolean;
+  adsUpserted?: number;
+  adsetsUpserted?: number;
+  statsInserted?: number;
+  recommendations?: { ads: number; adsets: number };
+  dateRange?: { start: string; end: string };
+  formatDetected?: "daily" | "aggregate";
+  parseWarnings?: string[];
+}
+
 export default function UploadPage() {
   const router = useRouter();
   const [brands, setBrands] = useState<Brand[]>([]);
   const [brandSlug, setBrandSlug] = useState<string>("");
   const [file, setFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [result, setResult] = useState<{
-    ok: boolean;
-    adsUpserted?: number;
-    adsetsUpserted?: number;
-    statsInserted?: number;
-    recommendations?: { ads: number; adsets: number };
-    dateRange?: { start: string; end: string };
-  } | null>(null);
+  const [result, setResult] = useState<UploadResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -52,7 +62,7 @@ export default function UploadPage() {
         setError(data.error ?? "Upload failed");
       } else {
         setResult(data);
-        setTimeout(() => router.push(`/${brandSlug}`), 2000);
+        setTimeout(() => router.push(`/${brandSlug}`), 3000);
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "unknown error");
@@ -68,14 +78,20 @@ export default function UploadPage() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Carga de datos</h1>
           <p className="mt-1 text-text-secondary">
-            Exporta desde Meta Ads Manager con <strong>Desglose → Por día</strong> y súbelo aquí.
+            Exporta desde Meta Ads Manager. Detectamos automáticamente si es
+            desglose por día o agregado por período.
           </p>
         </div>
       </header>
 
-      <form onSubmit={handleSubmit} className="space-y-6 rounded-lg border border-border bg-bg-raised p-6">
+      <form
+        onSubmit={handleSubmit}
+        className="space-y-6 rounded-lg border border-border bg-bg-raised p-6"
+      >
         <div>
-          <label className="mb-2 block text-sm font-medium text-text-secondary">Marca</label>
+          <label className="mb-2 block text-sm font-medium text-text-secondary">
+            Marca
+          </label>
           <select
             value={brandSlug}
             onChange={(e) => setBrandSlug(e.target.value)}
@@ -94,7 +110,9 @@ export default function UploadPage() {
         </div>
 
         <div>
-          <label className="mb-2 block text-sm font-medium text-text-secondary">Archivo CSV</label>
+          <label className="mb-2 block text-sm font-medium text-text-secondary">
+            Archivo CSV
+          </label>
           <label
             htmlFor="csv-input"
             className="flex cursor-pointer items-center justify-center rounded-md border-2 border-dashed border-border bg-bg px-6 py-10 transition hover:border-verdict-promising/40 hover:bg-bg-hover"
@@ -106,11 +124,14 @@ export default function UploadPage() {
                   <span className="font-mono text-text-primary">{file.name}</span>
                 ) : (
                   <span className="text-text-secondary">
-                    Arrastra el CSV aquí o <span className="text-verdict-promising">selecciona archivo</span>
+                    Arrastra el CSV aquí o{" "}
+                    <span className="text-verdict-promising">selecciona archivo</span>
                   </span>
                 )}
               </p>
-              <p className="mt-1 text-xs text-text-muted">Meta Ads Manager · .csv con breakdown por día</p>
+              <p className="mt-1 text-xs text-text-muted">
+                Meta Ads Manager · acepta agregado (MXN/USD) o desglose por día
+              </p>
             </div>
             <input
               id="csv-input"
@@ -137,20 +158,62 @@ export default function UploadPage() {
           <div className="space-y-3 rounded-md border border-verdict-winner/40 bg-verdict-winner/5 p-4">
             <div className="flex items-center gap-2 font-semibold text-verdict-winner">
               <Check className="h-4 w-4" /> Ingestado correctamente
+              {result.formatDetected && (
+                <span className="ml-auto rounded bg-bg/60 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-text-secondary">
+                  {result.formatDetected === "daily" ? "Desglose por día" : "Agregado"}
+                </span>
+              )}
             </div>
             <dl className="grid grid-cols-2 gap-2 text-sm md:grid-cols-4">
-              <Stat label="Ads nuevos" value={result.adsUpserted ?? 0} />
-              <Stat label="Adsets nuevos" value={result.adsetsUpserted ?? 0} />
+              <Stat label="Ads" value={result.adsUpserted ?? 0} />
+              <Stat label="Conjuntos" value={result.adsetsUpserted ?? 0} />
               <Stat label="Filas" value={result.statsInserted ?? 0} />
               <Stat
                 label="Recomendaciones"
                 value={(result.recommendations?.ads ?? 0) + (result.recommendations?.adsets ?? 0)}
               />
             </dl>
-            <p className="text-xs text-text-muted">Redirigiendo al dashboard de la marca…</p>
+            <p className="text-xs text-text-muted">
+              Redirigiendo al dashboard de la marca…
+            </p>
+          </div>
+        )}
+
+        {result?.parseWarnings && result.parseWarnings.length > 0 && (
+          <div className="space-y-2 rounded-md border border-verdict-borderline/40 bg-verdict-borderline/5 p-4 text-sm">
+            <div className="flex items-center gap-2 font-semibold text-verdict-borderline">
+              <Info className="h-4 w-4" /> Avisos del parser
+            </div>
+            <ul className="list-disc space-y-1 pl-5 text-text-secondary">
+              {result.parseWarnings.map((w, i) => (
+                <li key={i}>{w}</li>
+              ))}
+            </ul>
           </div>
         )}
       </form>
+
+      <aside className="rounded-lg border border-border bg-bg-raised p-5 text-sm">
+        <h3 className="flex items-center gap-2 font-semibold">
+          <Info className="h-4 w-4 text-verdict-promising" /> Cómo exportar correctamente en Meta
+        </h3>
+        <ol className="mt-3 list-decimal space-y-1 pl-5 text-text-secondary">
+          <li>Ads Manager → Columnas → Personalizar columnas.</li>
+          <li>
+            Activa: Identificador del anuncio, Nombre/Identificador del conjunto,
+            Nombre de la campaña, Impresiones, Clics (todos), CPC, CPM, Frecuencia,
+            Compras, Valor de conversión, Pagos iniciados, Artículos al carrito.
+          </li>
+          <li>
+            Desglose → <strong>Por día</strong>.
+          </li>
+          <li>Exportar a CSV y subirlo aquí.</li>
+        </ol>
+        <p className="mt-3 text-xs text-text-muted">
+          Si subes un export agregado (sin "Día"), igual lo aceptamos y convertimos MXN→USD,
+          pero pierdes detección de "sostenido 5 días" para escalamientos.
+        </p>
+      </aside>
     </div>
   );
 }
