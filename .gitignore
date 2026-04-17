@@ -1,0 +1,47 @@
+# Dependencies
+node_modules
+.pnp
+.pnp.js
+
+# Next.js
+.next
+out
+build
+dist
+
+# Environment
+.env
+.env.local
+.env*.local
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+
+# IDE
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+.idea
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing
+coverage
+.nyc_output
+
+# Drizzle
+drizzle/.cache
+
+# Turso local
+*.db
+*.db-journal
+local.db
+
+# Misc
+.vercel
+tsconfig.tsbuildinfo
+next-env.d.ts

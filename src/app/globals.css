@@ -1,0 +1,16 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  @apply bg-bg text-text-primary;
+}
+
+.mono {
+  font-family: var(--font-mono, "Space Mono", ui-monospace, monospace);
+}

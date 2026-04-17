@@ -1,0 +1,11 @@
+Día,Nombre del anuncio,Identificador del anuncio,Nombre del conjunto de anuncios,Identificador del conjunto,Nombre de la campaña,Importe gastado (USD),Compras,Valor de conversión de compras,Impresiones,Clics,CTR,CPC,CPM,Frecuencia,Pagos iniciados,Artículos agregados al carrito
+2026-04-10,SK28_C,111000001,Conjunto A,70000001,Feel Ink - Abril,40,2,120,1000,50,5.0,0.8,40.0,1.5,5,8
+2026-04-11,SK28_C,111000001,Conjunto A,70000001,Feel Ink - Abril,40,1,120,1100,60,5.5,0.67,36.36,1.6,3,6
+2026-04-12,SK28_C,111000001,Conjunto A,70000001,Feel Ink - Abril,45,2,180,1200,65,5.42,0.69,37.5,1.8,4,7
+2026-04-10,HOOK 3,111000002,Conjunto B,70000002,Feel Ink - Abril,25.00,0,0,800,20,2.5,1.25,31.25,1.8,2,4
+2026-04-11,HOOK 3,111000002,Conjunto B,70000002,Feel Ink - Abril,25.00,0,0,900,18,2.0,1.39,27.78,2.0,1,3
+2026-04-12,HOOK 3,111000002,Conjunto B,70000002,Feel Ink - Abril,30.00,0,0,1000,22,2.2,1.36,30.0,2.2,1,2
+2026-04-10,ADS-SK-003,111000003,Conjunto C,70000003,Feel Ink - Abril,15,1,40,500,25,5.0,0.6,30.0,1.4,2,3
+2026-04-11,ADS-SK-003,111000003,Conjunto C,70000003,Feel Ink - Abril,15,1,40,520,26,5.0,0.58,28.85,1.5,2,4
+2026-04-10,12_C,111000004,Conjunto D,70000004,Feel Ink - Abril,35,0,0,600,10,1.67,3.5,58.33,1.2,0,1
+2026-04-11,12_C,111000004,Conjunto D,70000004,Feel Ink - Abril,35,0,0,650,12,1.85,2.92,53.85,1.3,0,1
