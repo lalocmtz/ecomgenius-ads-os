@@ -17,7 +17,7 @@ import * as schema from "../src/lib/db/schema";
 import { calculateBrandThresholds } from "../src/lib/rules-engine";
 import { nanoid } from "nanoid";
 
-const OWNER_ID = process.env.SEED_OWNER_ID ?? "user_seed_owner";
+const OWNER_ID = process.env.SEED_OWNER_ID ?? "user_pending_claim";
 
 async function main() {
   const url = process.env.TURSO_DATABASE_URL;
