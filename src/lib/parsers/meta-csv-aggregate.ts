@@ -81,6 +81,37 @@ const COL_ALIASES: Record<string, string[]> = {
   impressions: ["impresiones", "impressions"],
   clicks: ["clics", "clicks", "link clicks"],
   frequency: ["frecuencia", "frequency"],
+  video_p25: [
+    "reproducciones del video hasta el 25%",
+    "reproducciones de video al 25%",
+    "video plays at 25%",
+    "video watches at 25%",
+  ],
+  video_p50: [
+    "reproducciones del video hasta el 50%",
+    "reproducciones de video al 50%",
+    "video plays at 50%",
+    "video watches at 50%",
+  ],
+  video_p75: [
+    "reproducciones del video hasta el 75%",
+    "reproducciones de video al 75%",
+    "video plays at 75%",
+    "video watches at 75%",
+  ],
+  video_p95: [
+    "reproducciones del video hasta el 95%",
+    "reproducciones de video al 95%",
+    "video plays at 95%",
+    "video watches at 95%",
+  ],
+  video_3s: [
+    "reproducciones de video de 3 segundos",
+    "reproducciones de video de tres segundos",
+    "3-second video plays",
+    "3 second video plays",
+  ],
+  thruplays: ["thruplays", "thruplay", "reproducciones de thruplay"],
   delivery: ["entrega del anuncio", "ad delivery"],
   ad_id: ["identificador del anuncio", "ad id"],
   adset_id: ["identificador del conjunto", "ad set id", "adset id"],
@@ -252,6 +283,12 @@ function mapRow(
     frequency: parseNumber(get(raw, cm.frequency ?? null)),
     atc: Math.round(parseNumber(get(raw, cm.atc ?? null)) ?? 0),
     ic: Math.round(parseNumber(get(raw, cm.ic ?? null)) ?? 0),
+    video_p25: roundOrNull(parseNumber(get(raw, cm.video_p25 ?? null))),
+    video_p50: roundOrNull(parseNumber(get(raw, cm.video_p50 ?? null))),
+    video_p75: roundOrNull(parseNumber(get(raw, cm.video_p75 ?? null))),
+    video_p95: roundOrNull(parseNumber(get(raw, cm.video_p95 ?? null))),
+    video_3s: roundOrNull(parseNumber(get(raw, cm.video_3s ?? null))),
+    thruplays: roundOrNull(parseNumber(get(raw, cm.thruplays ?? null))),
     platform: null,
     placement: null,
     age_range: null,
@@ -269,6 +306,10 @@ function stableId(input: string, prefix: string): string {
     h |= 0;
   }
   return `${prefix}_${Math.abs(h).toString(36)}`;
+}
+
+function roundOrNull(n: number | null): number | null {
+  return n === null ? null : Math.round(n);
 }
 
 function daysBetween(startIso: string, endIso: string): number {

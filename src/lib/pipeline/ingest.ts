@@ -198,6 +198,12 @@ export async function ingestMetaRows(args: IngestArgs): Promise<IngestResult> {
         cpc: r.cpc,
         cpm: r.cpm,
         roas: r.spend_usd > 0 ? r.revenue_usd / r.spend_usd : null,
+        videoP25: r.video_p25,
+        videoP50: r.video_p50,
+        videoP75: r.video_p75,
+        videoP95: r.video_p95,
+        video3s: r.video_3s,
+        thruplays: r.thruplays,
         platform: r.platform,
         placement: r.placement,
         ageRange: r.age_range,
@@ -230,12 +236,22 @@ export async function ingestMetaRows(args: IngestArgs): Promise<IngestResult> {
           cpc: r.cpc,
           cpm: r.cpm,
           roas: r.spend_usd > 0 ? r.revenue_usd / r.spend_usd : null,
+          videoP25: r.video_p25,
+          videoP50: r.video_p50,
+          videoP75: r.video_p75,
+          videoP95: r.video_p95,
+          video3s: r.video_3s,
+          thruplays: r.thruplays,
         },
       });
     statsInserted += 1;
   }
 
   // --- 5. Recompute adset_daily_stats ---
+  // Engagement rollups:
+  //   ctr = SUM(clicks) / SUM(impressions) (pooled)
+  //   cpm = SUM(spend) * 1000 / SUM(impressions)
+  //   frequency = SUM(frequency * impressions) / SUM(impressions) (impression-weighted average)
   const adIdList = Array.from(adIdMap.values());
   const aggRows = await db
     .select({
@@ -244,6 +260,9 @@ export async function ingestMetaRows(args: IngestArgs): Promise<IngestResult> {
       spendUsd: sql<number>`SUM(${adDailyStats.spendUsd})`.as("spend"),
       revenueUsd: sql<number>`SUM(${adDailyStats.revenueUsd})`.as("rev"),
       purchases: sql<number>`SUM(${adDailyStats.purchases})`.as("p"),
+      impressions: sql<number>`COALESCE(SUM(${adDailyStats.impressions}), 0)`.as("imp"),
+      clicks: sql<number>`COALESCE(SUM(${adDailyStats.clicks}), 0)`.as("clk"),
+      freqNum: sql<number | null>`SUM(${adDailyStats.frequency} * ${adDailyStats.impressions})`.as("fn"),
     })
     .from(adDailyStats)
     .innerJoin(ads, eq(ads.id, adDailyStats.adId))
@@ -251,6 +270,12 @@ export async function ingestMetaRows(args: IngestArgs): Promise<IngestResult> {
     .groupBy(ads.adsetId, adDailyStats.date);
 
   for (const a of aggRows) {
+    const ctr = a.impressions > 0 ? a.clicks / a.impressions : null;
+    const cpm = a.impressions > 0 ? (a.spendUsd * 1000) / a.impressions : null;
+    const frequency =
+      a.freqNum !== null && a.impressions > 0 ? a.freqNum / a.impressions : null;
+    const roas = a.spendUsd > 0 ? a.revenueUsd / a.spendUsd : null;
+
     await db
       .insert(adsetDailyStats)
       .values({
@@ -260,7 +285,12 @@ export async function ingestMetaRows(args: IngestArgs): Promise<IngestResult> {
         spendUsd: a.spendUsd,
         revenueUsd: a.revenueUsd,
         purchases: a.purchases,
-        roas: a.spendUsd > 0 ? a.revenueUsd / a.spendUsd : null,
+        impressions: a.impressions,
+        clicks: a.clicks,
+        ctr,
+        cpm,
+        frequency,
+        roas,
         createdAt: new Date(),
       })
       .onConflictDoUpdate({
@@ -269,7 +299,12 @@ export async function ingestMetaRows(args: IngestArgs): Promise<IngestResult> {
           spendUsd: a.spendUsd,
           revenueUsd: a.revenueUsd,
           purchases: a.purchases,
-          roas: a.spendUsd > 0 ? a.revenueUsd / a.spendUsd : null,
+          impressions: a.impressions,
+          clicks: a.clicks,
+          ctr,
+          cpm,
+          frequency,
+          roas,
         },
       });
   }

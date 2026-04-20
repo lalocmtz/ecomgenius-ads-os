@@ -38,6 +38,13 @@ export interface MetaRow {
   frequency: number | null;
   atc: number;
   ic: number;
+  // Video engagement (nullable — only present when CSV includes video columns)
+  video_p25: number | null;
+  video_p50: number | null;
+  video_p75: number | null;
+  video_p95: number | null;
+  video_3s: number | null;
+  thruplays: number | null;
   // Breakdowns
   platform: string | null;
   placement: string | null;
@@ -123,6 +130,37 @@ const COL_ALIASES: Record<string, string[]> = {
     "add to cart",
   ],
   ic: ["pagos iniciados", "checkouts initiated", "initiate checkout"],
+  video_p25: [
+    "reproducciones del video hasta el 25%",
+    "reproducciones de video al 25%",
+    "video plays at 25%",
+    "video watches at 25%",
+  ],
+  video_p50: [
+    "reproducciones del video hasta el 50%",
+    "reproducciones de video al 50%",
+    "video plays at 50%",
+    "video watches at 50%",
+  ],
+  video_p75: [
+    "reproducciones del video hasta el 75%",
+    "reproducciones de video al 75%",
+    "video plays at 75%",
+    "video watches at 75%",
+  ],
+  video_p95: [
+    "reproducciones del video hasta el 95%",
+    "reproducciones de video al 95%",
+    "video plays at 95%",
+    "video watches at 95%",
+  ],
+  video_3s: [
+    "reproducciones de video de 3 segundos",
+    "reproducciones de video de tres segundos",
+    "3-second video plays",
+    "3 second video plays",
+  ],
+  thruplays: ["thruplays", "thruplay", "reproducciones de thruplay"],
   platform: ["plataforma", "platform", "publisher platform"],
   placement: ["ubicacion", "ubicación", "placement"],
   age_range: ["edad", "age"],
@@ -303,6 +341,12 @@ function mapRow(
     frequency: parseNumber(get(raw, cm.frequency ?? null)),
     atc: Math.round(parseNumber(get(raw, cm.atc ?? null)) ?? 0),
     ic: Math.round(parseNumber(get(raw, cm.ic ?? null)) ?? 0),
+    video_p25: roundOrNull(parseNumber(get(raw, cm.video_p25 ?? null))),
+    video_p50: roundOrNull(parseNumber(get(raw, cm.video_p50 ?? null))),
+    video_p75: roundOrNull(parseNumber(get(raw, cm.video_p75 ?? null))),
+    video_p95: roundOrNull(parseNumber(get(raw, cm.video_p95 ?? null))),
+    video_3s: roundOrNull(parseNumber(get(raw, cm.video_3s ?? null))),
+    thruplays: roundOrNull(parseNumber(get(raw, cm.thruplays ?? null))),
     platform: nullIfEmpty(get(raw, cm.platform ?? null)),
     placement: nullIfEmpty(get(raw, cm.placement ?? null)),
     age_range: nullIfEmpty(get(raw, cm.age_range ?? null)),
@@ -310,6 +354,10 @@ function mapRow(
     region: nullIfEmpty(get(raw, cm.region ?? null)),
     device: nullIfEmpty(get(raw, cm.device ?? null)),
   };
+}
+
+function roundOrNull(n: number | null): number | null {
+  return n === null ? null : Math.round(n);
 }
 
 function nullIfEmpty(s: string | undefined): string | null {
