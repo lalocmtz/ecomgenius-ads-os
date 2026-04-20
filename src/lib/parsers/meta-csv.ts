@@ -83,7 +83,7 @@ export function normalizeHeader(h: string): string {
 }
 
 const COL_ALIASES: Record<string, string[]> = {
-  date: ["dia", "day", "fecha", "date"],
+  date: ["dia", "day", "fecha", "date", "inicio del informe", "fin del informe"],
   ad_name: ["nombre del anuncio", "ad name"],
   ad_id: [
     "identificador del anuncio",
