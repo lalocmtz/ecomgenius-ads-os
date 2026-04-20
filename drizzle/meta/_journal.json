@@ -8,6 +8,13 @@
       "when": 1776401065498,
       "tag": "0000_breezy_whistler",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1776725668240,
+      "tag": "0001_sour_smiling_tiger",
+      "breakpoints": true
     }
   ]
 }

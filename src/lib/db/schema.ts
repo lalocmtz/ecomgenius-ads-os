@@ -177,6 +177,13 @@ export const adDailyStats = sqliteTable(
     cpc: real("cpc"),
     cpm: real("cpm"),
     roas: real("roas"),
+    // Video engagement (nullable — depend on CSV export options)
+    videoP25: integer("video_p25"),
+    videoP50: integer("video_p50"),
+    videoP75: integer("video_p75"),
+    videoP95: integer("video_p95"),
+    video3s: integer("video_3s"),
+    thruplays: integer("thruplays"),
     // Breakdowns (nullable — depend on CSV export options)
     platform: text("platform"),
     placement: text("placement"),
@@ -217,6 +224,11 @@ export const adsetDailyStats = sqliteTable(
     spendUsd: real("spend_usd").notNull().default(0),
     revenueUsd: real("revenue_usd").notNull().default(0),
     purchases: integer("purchases").notNull().default(0),
+    impressions: integer("impressions").notNull().default(0),
+    clicks: integer("clicks").notNull().default(0),
+    ctr: real("ctr"),
+    cpm: real("cpm"),
+    frequency: real("frequency"),
     roas: real("roas"),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .notNull()
@@ -343,6 +355,7 @@ export type NewAd = typeof ads.$inferInsert;
 export type AdDailyStat = typeof adDailyStats.$inferSelect;
 export type NewAdDailyStat = typeof adDailyStats.$inferInsert;
 export type AdsetDailyStat = typeof adsetDailyStats.$inferSelect;
+export type NewAdsetDailyStat = typeof adsetDailyStats.$inferInsert;
 export type CsvUpload = typeof csvUploads.$inferSelect;
 export type CreativeAnalysis = typeof creativeAnalyses.$inferSelect;
 export type Recommendation = typeof recommendations.$inferSelect;
