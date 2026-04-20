@@ -2,23 +2,29 @@ import { notFound } from "next/navigation";
 import { auth } from "@clerk/nextjs/server";
 import Link from "next/link";
 import { StatCard } from "@/components/ui/StatCard";
-import { RecommendationCard } from "@/components/ads/RecommendationCard";
+import { AdsetCard } from "@/components/ads/AdsetCard";
+import { RangeFilter } from "@/components/ads/RangeFilter";
 import {
   getBrandBySlug,
-  getAccountSummary,
-  getLatestUpload,
-  getRecommendationsForUpload,
-  getAdsByIds,
-  getAdsetsByIds,
   getBrandEconomics,
 } from "@/lib/db/queries/brands";
+import {
+  getAdsetsForBrand,
+  getAdsForBrand,
+  getBrandRollup,
+  getBrandDateBounds,
+} from "@/lib/db/queries/dashboard";
 import { calculateBrandThresholds } from "@/lib/rules-engine";
-import { formatUsd, formatRoas, formatInt } from "@/lib/utils/format";
+import { classifyAdset } from "@/lib/rules-engine/adset-classifier";
+import { parseRange, resolveRange, RANGE_LABELS } from "@/lib/utils/date-range";
+import { formatInt, formatRoas, formatUsd } from "@/lib/utils/format";
 
 export default async function BrandDashboard({
   params,
+  searchParams,
 }: {
   params: { brandSlug: string };
+  searchParams: { range?: string };
 }) {
   const { userId } = auth();
   if (!userId) notFound();
@@ -26,11 +32,34 @@ export default async function BrandDashboard({
   const brand = await getBrandBySlug(params.brandSlug, userId);
   if (!brand) notFound();
 
-  const [summary, upload, econ] = await Promise.all([
-    getAccountSummary(brand.id),
-    getLatestUpload(brand.id),
-    getBrandEconomics(brand.id),
-  ]);
+  const rangeKey = parseRange(searchParams.range);
+  const bounds = await getBrandDateBounds(brand.id);
+
+  if (!bounds.max) {
+    return (
+      <div className="mx-auto max-w-6xl space-y-6">
+        <header className="flex items-baseline justify-between">
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight">{brand.name}</h1>
+            <p className="mt-1 text-text-secondary">
+              Aún no hay datos. Sube el primer CSV para ver recomendaciones.
+            </p>
+          </div>
+        </header>
+        <div className="rounded-lg border border-border bg-bg-raised p-8 text-center">
+          <Link
+            href={`/${brand.slug}/upload`}
+            className="inline-block rounded-md bg-verdict-winner px-4 py-2 font-medium text-bg"
+          >
+            Subir CSV ahora
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  const range = resolveRange(rangeKey, bounds);
+  const econ = await getBrandEconomics(brand.id);
 
   const thresholds = econ
     ? calculateBrandThresholds({
@@ -46,51 +75,50 @@ export default async function BrandDashboard({
       })
     : null;
 
-  const recs = upload ? await getRecommendationsForUpload(brand.id, upload.id) : [];
-  const adRecs = recs.filter((r) => r.entityType === "ad");
-  const adsetRecs = recs.filter((r) => r.entityType === "adset");
-  const adById = new Map((await getAdsByIds(adRecs.map((r) => r.entityId))).map((a) => [a.id, a]));
-  const adsetById = new Map(
-    (await getAdsetsByIds(adsetRecs.map((r) => r.entityId))).map((a) => [a.id, a]),
-  );
+  const minRoas = thresholds?.min_roas ?? 2;
 
-  // Group ad recs by action type
-  const groups: Record<string, typeof adRecs> = {
-    kill: [],
-    rotate: [],
-    iterate: [],
-    let_run: [],
-    keep: [],
-  };
-  for (const r of adRecs) {
-    (groups[r.action] ?? (groups[r.action] = [])).push(r);
+  const [rollup, adsetRows, adRows] = await Promise.all([
+    getBrandRollup(brand.id, range),
+    getAdsetsForBrand(brand.id, range, minRoas),
+    getAdsForBrand(brand.id, range),
+  ]);
+
+  const adsByAdset = new Map<string, typeof adRows>();
+  for (const ad of adRows) {
+    if (ad.spendUsd === 0 && ad.impressions === 0) continue;
+    const list = adsByAdset.get(ad.adsetId) ?? [];
+    list.push(ad);
+    adsByAdset.set(ad.adsetId, list);
+  }
+  for (const list of adsByAdset.values()) {
+    list.sort((a, b) => b.spendUsd - a.spendUsd);
   }
 
-  const accountUnderMin =
-    thresholds && summary.roas > 0 && summary.roas < thresholds.min_roas;
+  const visibleAdsets = adsetRows.filter((a) => a.spendUsd > 0);
+  const accountRoas = rollup.roas;
+  const accountUnderMin = thresholds && accountRoas > 0 && accountRoas < minRoas;
 
   return (
-    <main className="mx-auto max-w-6xl px-6 py-8">
-      <header className="mb-8 flex items-baseline justify-between">
+    <div className="space-y-6">
+      <header className="flex flex-wrap items-baseline justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold">{brand.name}</h1>
-          <p className="text-text-secondary">
-            Período:{" "}
-            {upload
-              ? `${upload.dateRangeStart} → ${upload.dateRangeEnd}`
-              : "sin subidas aún"}
+          <h1 className="text-3xl font-bold tracking-tight">{brand.name}</h1>
+          <p className="mt-1 text-sm text-text-secondary">
+            {RANGE_LABELS[rangeKey]} · {range.start}
+            {range.start !== range.end ? ` → ${range.end}` : ""}
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex items-center gap-2">
+          <RangeFilter active={rangeKey} />
           <Link
-            href="/upload"
-            className="rounded border border-border px-3 py-1.5 text-sm hover:bg-bg-hover"
+            href={`/${brand.slug}/upload`}
+            className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-bg-hover"
           >
             Subir CSV
           </Link>
           <Link
             href={`/${brand.slug}/config`}
-            className="rounded border border-border px-3 py-1.5 text-sm hover:bg-bg-hover"
+            className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-bg-hover"
           >
             Config
           </Link>
@@ -98,91 +126,65 @@ export default async function BrandDashboard({
       </header>
 
       {accountUnderMin && (
-        <div className="mb-6 rounded-lg border border-verdict-loser/40 bg-verdict-loser/10 p-4">
+        <div className="rounded-lg border border-verdict-loser/40 bg-verdict-loser/10 p-4">
           <p className="font-semibold text-verdict-loser">
-            ⚠️ ROAS cuenta {formatRoas(summary.roas)} bajo mínimo (
-            {formatRoas(thresholds.min_roas)}). Freno a escalamientos.
+            ⚠️ ROAS cuenta {formatRoas(accountRoas)} bajo mínimo (
+            {formatRoas(minRoas)}). Freno a escalamientos.
           </p>
         </div>
       )}
 
-      <section className="mb-8 grid grid-cols-2 gap-3 md:grid-cols-4">
-        <StatCard label="Gasto" value={formatUsd(summary.spend_usd)} />
-        <StatCard label="Revenue" value={formatUsd(summary.revenue_usd)} />
-        <StatCard label="Compras" value={formatInt(summary.purchases)} />
-        <StatCard label="ROAS" value={formatRoas(summary.roas)} />
+      <section className="grid grid-cols-2 gap-3 md:grid-cols-5">
+        <StatCard label="Gasto" value={formatUsd(rollup.spendUsd)} />
+        <StatCard label="Revenue" value={formatUsd(rollup.revenueUsd)} />
+        <StatCard label="Compras" value={formatInt(rollup.purchases)} />
+        <StatCard label="ROAS" value={formatRoas(rollup.roas)} />
+        <StatCard
+          label="Mínimo"
+          value={thresholds ? formatRoas(thresholds.min_roas) : "—"}
+        />
       </section>
 
-      {upload ? (
-        <>
-          <h2 className="mb-3 text-xl font-semibold">Acciones sugeridas</h2>
-          <div className="space-y-6">
-            {(["kill", "rotate", "iterate", "let_run", "keep"] as const).map((action) => {
-              const list = groups[action] ?? [];
-              if (list.length === 0) return null;
+      <section>
+        <h2 className="mb-3 text-xl font-semibold">
+          Conjuntos ({visibleAdsets.length})
+        </h2>
+        {visibleAdsets.length === 0 ? (
+          <div className="rounded-lg border border-dashed border-border bg-bg-raised p-8 text-center text-sm text-text-secondary">
+            Sin gasto registrado en el período seleccionado.
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {visibleAdsets.map((adset) => {
+              const classification = thresholds
+                ? classifyAdset(
+                    {
+                      total_spend_usd: adset.spendUsd,
+                      total_revenue_usd: adset.revenueUsd,
+                      total_purchases: adset.purchases,
+                      days_with_data: adset.daysWithData,
+                      days_with_roas_above_min: adset.daysWithRoasAboveMin,
+                      active_ads_count: adsByAdset.get(adset.adsetId)?.length ?? 0,
+                    },
+                    thresholds,
+                    accountRoas,
+                  )
+                : null;
               return (
-                <div key={action}>
-                  <h3 className="mb-2 font-mono text-xs uppercase tracking-wider text-text-muted">
-                    {action.replace("_", " ")} ({list.length})
-                  </h3>
-                  <div className="grid gap-2 md:grid-cols-2">
-                    {list.map((r) => {
-                      const ad = adById.get(r.entityId);
-                      return (
-                        <RecommendationCard
-                          key={r.id}
-                          brandSlug={brand.slug}
-                          entityType="ad"
-                          entityId={r.entityId}
-                          entityName={ad?.name ?? r.entityId}
-                          action={r.action}
-                          reason={r.reason}
-                        />
-                      );
-                    })}
-                  </div>
-                </div>
+                <AdsetCard
+                  key={adset.adsetId}
+                  brandSlug={brand.slug}
+                  adset={adset}
+                  action={classification?.action ?? null}
+                  actionReason={classification?.reason ?? null}
+                  ads={adsByAdset.get(adset.adsetId) ?? []}
+                  minRoas={minRoas}
+                />
               );
             })}
-
-            {adsetRecs.length > 0 && (
-              <div>
-                <h3 className="mb-2 font-mono text-xs uppercase tracking-wider text-text-muted">
-                  Conjuntos ({adsetRecs.length})
-                </h3>
-                <div className="grid gap-2 md:grid-cols-2">
-                  {adsetRecs.map((r) => {
-                    const adset = adsetById.get(r.entityId);
-                    return (
-                      <RecommendationCard
-                        key={r.id}
-                        brandSlug={brand.slug}
-                        entityType="adset"
-                        entityId={r.entityId}
-                        entityName={adset?.name ?? r.entityId}
-                        action={r.action}
-                        reason={r.reason}
-                      />
-                    );
-                  })}
-                </div>
-              </div>
-            )}
           </div>
-        </>
-      ) : (
-        <div className="rounded-lg border border-border bg-bg-raised p-8 text-center">
-          <p className="text-text-secondary">
-            Aún no hay datos. Sube el primer CSV para ver recomendaciones.
-          </p>
-          <Link
-            href="/upload"
-            className="mt-4 inline-block rounded bg-verdict-winner px-4 py-2 font-medium text-bg"
-          >
-            Subir CSV ahora
-          </Link>
-        </div>
-      )}
-    </main>
+        )}
+      </section>
+    </div>
   );
 }
