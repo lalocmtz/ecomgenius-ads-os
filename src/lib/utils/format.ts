@@ -10,6 +10,24 @@ export function formatUsd(amount: number, opts: { precision?: number } = {}): st
   })}`;
 }
 
+/** Format a USD amount in the requested display currency.
+ *  currency="MXN" multiplies by exchangeRate and appends " MXN".
+ *  Never use this for dimensionless ratios (ROAS, CTR, frequency). */
+export function formatMoney(
+  usdAmount: number,
+  currency: "USD" | "MXN",
+  exchangeRate: number,
+): string {
+  if (currency === "MXN") {
+    const mxn = usdAmount * exchangeRate;
+    return `$${mxn.toLocaleString("en-US", {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    })} MXN`;
+  }
+  return formatUsd(usdAmount);
+}
+
 export function formatRoas(roas: number): string {
   return `${roas.toFixed(2)}x`;
 }

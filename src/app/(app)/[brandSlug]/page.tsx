@@ -4,6 +4,7 @@ import Link from "next/link";
 import { StatCard } from "@/components/ui/StatCard";
 import { AdsetCard } from "@/components/ads/AdsetCard";
 import { RangeFilter } from "@/components/ads/RangeFilter";
+import { CurrencyToggle, type DisplayCurrency } from "@/components/ads/CurrencyToggle";
 import {
   getBrandBySlug,
   getBrandEconomics,
@@ -17,14 +18,14 @@ import {
 import { calculateBrandThresholds } from "@/lib/rules-engine";
 import { classifyAdset } from "@/lib/rules-engine/adset-classifier";
 import { parseRange, resolveRange, RANGE_LABELS } from "@/lib/utils/date-range";
-import { formatInt, formatRoas, formatUsd } from "@/lib/utils/format";
+import { formatInt, formatMoney, formatRoas } from "@/lib/utils/format";
 
 export default async function BrandDashboard({
   params,
   searchParams,
 }: {
   params: { brandSlug: string };
-  searchParams: { range?: string };
+  searchParams: { range?: string; currency?: string };
 }) {
   const { userId } = auth();
   if (!userId) notFound();
@@ -33,6 +34,10 @@ export default async function BrandDashboard({
   if (!brand) notFound();
 
   const rangeKey = parseRange(searchParams.range);
+  const currency: DisplayCurrency =
+    searchParams.currency?.toUpperCase() === "MXN" ? "MXN" : "USD";
+  const exchangeRate = brand.exchangeRate;
+  const fmt = (usd: number) => formatMoney(usd, currency, exchangeRate);
   const bounds = await getBrandDateBounds(brand.id);
 
   if (!bounds.max) {
@@ -108,8 +113,9 @@ export default async function BrandDashboard({
             {range.start !== range.end ? ` → ${range.end}` : ""}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <RangeFilter active={rangeKey} />
+          <CurrencyToggle active={currency} />
           <Link
             href={`/${brand.slug}/upload`}
             className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-bg-hover"
@@ -135,8 +141,8 @@ export default async function BrandDashboard({
       )}
 
       <section className="grid grid-cols-2 gap-3 md:grid-cols-5">
-        <StatCard label="Gasto" value={formatUsd(rollup.spendUsd)} />
-        <StatCard label="Revenue" value={formatUsd(rollup.revenueUsd)} />
+        <StatCard label={`Gasto (${currency})`} value={fmt(rollup.spendUsd)} />
+        <StatCard label={`Revenue (${currency})`} value={fmt(rollup.revenueUsd)} />
         <StatCard label="Compras" value={formatInt(rollup.purchases)} />
         <StatCard label="ROAS" value={formatRoas(rollup.roas)} />
         <StatCard
@@ -179,6 +185,8 @@ export default async function BrandDashboard({
                   actionReason={classification?.reason ?? null}
                   ads={adsByAdset.get(adset.adsetId) ?? []}
                   minRoas={minRoas}
+                  currency={currency}
+                  exchangeRate={exchangeRate}
                 />
               );
             })}

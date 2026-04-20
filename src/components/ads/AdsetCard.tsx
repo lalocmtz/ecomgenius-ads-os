@@ -5,7 +5,8 @@ import Link from "next/link";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 import { VerdictBadge } from "@/components/ui/VerdictBadge";
-import { formatInt, formatPct, formatRoas, formatUsd } from "@/lib/utils/format";
+import { formatInt, formatMoney, formatPct, formatRoas } from "@/lib/utils/format";
+import type { DisplayCurrency } from "@/components/ads/CurrencyToggle";
 import type { AdRow, AdsetRow } from "@/lib/db/queries/dashboard";
 import type { AdVerdict } from "@/lib/rules-engine/types";
 
@@ -29,6 +30,8 @@ export interface AdsetCardProps {
   actionReason: string | null;
   ads: AdRow[];
   minRoas: number;
+  currency?: DisplayCurrency;
+  exchangeRate?: number;
   initiallyOpen?: boolean;
 }
 
@@ -47,11 +50,14 @@ export function AdsetCard({
   actionReason,
   ads,
   minRoas,
+  currency = "USD",
+  exchangeRate = 1,
   initiallyOpen = false,
 }: AdsetCardProps) {
   const [open, setOpen] = useState(initiallyOpen);
   const roasClass = roasColorClass(adset.roas, minRoas);
   const style = action ? ACTION_STYLES[action] : null;
+  const fmt = (usd: number) => formatMoney(usd, currency, exchangeRate);
 
   return (
     <div className="overflow-hidden rounded-lg border border-border bg-bg-raised">
@@ -90,7 +96,7 @@ export function AdsetCard({
             <div className="text-[10px] uppercase tracking-wider text-text-muted">
               Spend
             </div>
-            <div>{formatUsd(adset.spendUsd)}</div>
+            <div>{fmt(adset.spendUsd)}</div>
           </div>
           <div>
             <div className="text-[10px] uppercase tracking-wider text-text-muted">
@@ -119,13 +125,13 @@ export function AdsetCard({
               {actionReason}
             </p>
           )}
-          <AdsetMetricsStrip adset={adset} minRoas={minRoas} />
+          <AdsetMetricsStrip adset={adset} minRoas={minRoas} fmt={fmt} />
           {ads.length === 0 ? (
             <p className="mt-3 text-xs text-text-muted">
               Sin anuncios activos en el período.
             </p>
           ) : (
-            <AdsTable brandSlug={brandSlug} ads={ads} minRoas={minRoas} />
+            <AdsTable brandSlug={brandSlug} ads={ads} minRoas={minRoas} fmt={fmt} />
           )}
         </div>
       )}
@@ -136,14 +142,16 @@ export function AdsetCard({
 function AdsetMetricsStrip({
   adset,
   minRoas,
+  fmt,
 }: {
   adset: AdsetRow;
   minRoas: number;
+  fmt: (usd: number) => string;
 }) {
   const ctrPct = adset.ctr !== null ? adset.ctr * 100 : null;
   return (
     <dl className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-6">
-      <Metric label="Rev" value={formatUsd(adset.revenueUsd)} />
+      <Metric label="Rev" value={fmt(adset.revenueUsd)} />
       <Metric
         label="ROAS"
         value={formatRoas(adset.roas)}
@@ -186,10 +194,12 @@ function AdsTable({
   brandSlug,
   ads,
   minRoas,
+  fmt,
 }: {
   brandSlug: string;
   ads: AdRow[];
   minRoas: number;
+  fmt: (usd: number) => string;
 }) {
   return (
     <div className="mt-3 overflow-hidden rounded border border-border">
@@ -223,7 +233,7 @@ function AdsTable({
                   )}
                 </td>
                 <td className="px-3 py-2 text-right font-mono">
-                  {formatUsd(ad.spendUsd)}
+                  {fmt(ad.spendUsd)}
                 </td>
                 <td className="px-3 py-2 text-right font-mono">
                   {formatInt(ad.purchases)}
