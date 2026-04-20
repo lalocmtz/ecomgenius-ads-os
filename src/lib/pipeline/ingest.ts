@@ -5,12 +5,10 @@
  *   1. Upserts adsets and ads (by external_id within account).
  *   2. Inserts / upserts rows into ad_daily_stats.
  *   3. Recomputes adset_daily_stats from ad_daily_stats.
- *   4. Runs the rules engine over ALL ads and adsets of the brand (since
- *      KILLED and prior-state ads must still be considered).
+ *   4. Runs the rules engine over ALL ads and adsets of the brand.
  *   5. Persists `recommendations` rows and `csv_uploads` bookkeeping.
  *
- * This function operates on a database handle — pure data in, writes out.
- * Returns a summary for the UI.
+ * All hot loops use batched SQL to stay within Vercel's 10s function limit.
  */
 
 import { and, eq, sql, inArray } from "drizzle-orm";
@@ -59,62 +57,67 @@ export interface IngestResult {
   dateRange: { start: string; end: string };
 }
 
+const BATCH = 200; // rows per INSERT statement (safe for SQLite param limits)
+
+function chunks<T>(arr: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
 export async function ingestMetaRows(args: IngestArgs): Promise<IngestResult> {
   const { db, brandId, accountId, sourceId, uploadedBy, filename, rows } = args;
 
-  if (rows.length === 0) {
-    throw new Error("No rows to ingest");
-  }
+  if (rows.length === 0) throw new Error("No rows to ingest");
 
   const dateRange = {
     start: rows.reduce((m, r) => (r.date < m ? r.date : m), rows[0]!.date),
     end: rows.reduce((m, r) => (r.date > m ? r.date : m), rows[0]!.date),
   };
 
-  // --- 1. Verify the account belongs to the brand ---
+  // --- 1. Verify account ---
   const [account] = await db
     .select()
     .from(adAccounts)
     .where(and(eq(adAccounts.id, accountId), eq(adAccounts.brandId, brandId)))
     .limit(1);
-  if (!account) {
-    throw new Error(`Account ${accountId} does not belong to brand ${brandId}`);
-  }
+  if (!account) throw new Error(`Account ${accountId} does not belong to brand ${brandId}`);
 
-  // --- 2. Upsert adsets ---
+  // --- 2. Upsert adsets (bulk) ---
   const distinctAdsets = new Map<string, { name: string; campaign: string | null }>();
   for (const r of rows) {
     if (!distinctAdsets.has(r.adset_external_id)) {
-      distinctAdsets.set(r.adset_external_id, {
-        name: r.adset_name,
-        campaign: r.campaign_name,
-      });
+      distinctAdsets.set(r.adset_external_id, { name: r.adset_name, campaign: r.campaign_name });
     }
   }
 
-  const adsetIdMap = new Map<string, string>(); // external_id → internal id
+  const extAdsetIds = Array.from(distinctAdsets.keys());
+  const existingAdsets =
+    extAdsetIds.length > 0
+      ? await db
+          .select({ id: adsets.id, externalId: adsets.externalId, name: adsets.name })
+          .from(adsets)
+          .where(and(eq(adsets.accountId, accountId), inArray(adsets.externalId, extAdsetIds)))
+      : [];
+
+  const adsetIdMap = new Map<string, string>();
+  const existingAdsetMap = new Map(existingAdsets.map((r) => [r.externalId, r]));
   let adsetsUpserted = 0;
 
+  const newAdsets: (typeof adsets.$inferInsert)[] = [];
   for (const [extId, info] of distinctAdsets) {
-    const existing = await db
-      .select()
-      .from(adsets)
-      .where(and(eq(adsets.accountId, accountId), eq(adsets.externalId, extId)))
-      .limit(1);
-
-    if (existing.length > 0) {
-      const row = existing[0]!;
-      adsetIdMap.set(extId, row.id);
-      // Optional: update name if changed.
-      if (row.name !== info.name) {
+    const existing = existingAdsetMap.get(extId);
+    if (existing) {
+      adsetIdMap.set(extId, existing.id);
+      if (existing.name !== info.name) {
         await db
           .update(adsets)
           .set({ name: info.name, campaignName: info.campaign, updatedAt: new Date() })
-          .where(eq(adsets.id, row.id));
+          .where(eq(adsets.id, existing.id));
       }
     } else {
       const id = newId("adset");
-      await db.insert(adsets).values({
+      newAdsets.push({
         id,
         externalId: extId,
         accountId,
@@ -125,11 +128,14 @@ export async function ingestMetaRows(args: IngestArgs): Promise<IngestResult> {
         updatedAt: new Date(),
       });
       adsetIdMap.set(extId, id);
-      adsetsUpserted += 1;
+      adsetsUpserted++;
     }
   }
+  for (const batch of chunks(newAdsets, BATCH)) {
+    await db.insert(adsets).values(batch);
+  }
 
-  // --- 3. Upsert ads ---
+  // --- 3. Upsert ads (bulk) ---
   const distinctAds = new Map<string, { adsetExt: string; name: string }>();
   for (const r of rows) {
     const key = `${r.adset_external_id}::${r.ad_external_id}`;
@@ -138,29 +144,36 @@ export async function ingestMetaRows(args: IngestArgs): Promise<IngestResult> {
     }
   }
 
-  const adIdMap = new Map<string, string>();
+  const adsetInternalIds = Array.from(adsetIdMap.values());
+  const existingAds =
+    adsetInternalIds.length > 0
+      ? await db
+          .select({ id: ads.id, externalId: ads.externalId, adsetId: ads.adsetId, name: ads.name })
+          .from(ads)
+          .where(inArray(ads.adsetId, adsetInternalIds))
+      : [];
+
+  const existingAdMap = new Map(existingAds.map((r) => [`${r.adsetId}::${r.externalId}`, r]));
+  const adIdMap = new Map<string, string>(); // "adsetExtId::adExtId" → internal id
   let adsUpserted = 0;
+
+  const newAds: (typeof ads.$inferInsert)[] = [];
   for (const [key, info] of distinctAds) {
     const adsetInternalId = adsetIdMap.get(info.adsetExt)!;
     const extAdId = key.split("::")[1]!;
-    const existing = await db
-      .select()
-      .from(ads)
-      .where(and(eq(ads.adsetId, adsetInternalId), eq(ads.externalId, extAdId)))
-      .limit(1);
-
-    if (existing.length > 0) {
-      const row = existing[0]!;
-      adIdMap.set(key, row.id);
-      if (row.name !== info.name) {
+    const lookupKey = `${adsetInternalId}::${extAdId}`;
+    const existing = existingAdMap.get(lookupKey);
+    if (existing) {
+      adIdMap.set(key, existing.id);
+      if (existing.name !== info.name) {
         await db
           .update(ads)
           .set({ name: info.name, updatedAt: new Date() })
-          .where(eq(ads.id, row.id));
+          .where(eq(ads.id, existing.id));
       }
     } else {
       const id = newId("ad");
-      await db.insert(ads).values({
+      newAds.push({
         id,
         externalId: extAdId,
         adsetId: adsetInternalId,
@@ -170,88 +183,89 @@ export async function ingestMetaRows(args: IngestArgs): Promise<IngestResult> {
         updatedAt: new Date(),
       });
       adIdMap.set(key, id);
-      adsUpserted += 1;
+      adsUpserted++;
     }
   }
-
-  // --- 4. Insert ad_daily_stats ---
-  // Upsert semantics: key is (ad, date, breakdown*).  SQLite ON CONFLICT.
-  let statsInserted = 0;
-  for (const r of rows) {
-    const adKey = `${r.adset_external_id}::${r.ad_external_id}`;
-    const adId = adIdMap.get(adKey)!;
-    await db
-      .insert(adDailyStats)
-      .values({
-        id: newId("stat"),
-        adId,
-        date: r.date,
-        spendUsd: r.spend_usd,
-        revenueUsd: r.revenue_usd,
-        purchases: r.purchases,
-        impressions: r.impressions,
-        clicks: r.clicks,
-        atc: r.atc,
-        ic: r.ic,
-        frequency: r.frequency,
-        ctr: r.ctr,
-        cpc: r.cpc,
-        cpm: r.cpm,
-        roas: r.spend_usd > 0 ? r.revenue_usd / r.spend_usd : null,
-        videoP25: r.video_p25,
-        videoP50: r.video_p50,
-        videoP75: r.video_p75,
-        videoP95: r.video_p95,
-        video3s: r.video_3s,
-        thruplays: r.thruplays,
-        platform: r.platform,
-        placement: r.placement,
-        ageRange: r.age_range,
-        gender: r.gender,
-        region: r.region,
-        device: r.device,
-        createdAt: new Date(),
-      })
-      .onConflictDoUpdate({
-        target: [
-          adDailyStats.adId,
-          adDailyStats.date,
-          adDailyStats.platform,
-          adDailyStats.placement,
-          adDailyStats.ageRange,
-          adDailyStats.gender,
-          adDailyStats.region,
-          adDailyStats.device,
-        ],
-        set: {
-          spendUsd: r.spend_usd,
-          revenueUsd: r.revenue_usd,
-          purchases: r.purchases,
-          impressions: r.impressions,
-          clicks: r.clicks,
-          atc: r.atc,
-          ic: r.ic,
-          frequency: r.frequency,
-          ctr: r.ctr,
-          cpc: r.cpc,
-          cpm: r.cpm,
-          roas: r.spend_usd > 0 ? r.revenue_usd / r.spend_usd : null,
-          videoP25: r.video_p25,
-          videoP50: r.video_p50,
-          videoP75: r.video_p75,
-          videoP95: r.video_p95,
-          video3s: r.video_3s,
-          thruplays: r.thruplays,
-        },
-      });
-    statsInserted += 1;
+  for (const batch of chunks(newAds, BATCH)) {
+    await db.insert(ads).values(batch);
   }
 
-  // --- 5. Recompute adset_daily_stats ---
-  // Engagement rollups:
-  //   ctr = SUM(clicks) / SUM(impressions) (pooled)
-  //   cpm = SUM(spend) * 1000 / SUM(impressions)
-  //   frequency = SUM(frequency * impressions) / SUM(impressions) (impression-weighted average)
+  // --- 4. Batch-insert ad_daily_stats ---
+  const statValues: (typeof adDailyStats.$inferInsert)[] = rows.map((r) => {
+    const adKey = `${r.adset_external_id}::${r.ad_external_id}`;
+    return {
+      id: newId("stat"),
+      adId: adIdMap.get(adKey)!,
+      date: r.date,
+      spendUsd: r.spend_usd,
+      revenueUsd: r.revenue_usd,
+      purchases: r.purchases,
+      impressions: r.impressions,
+      clicks: r.clicks,
+      atc: r.atc,
+      ic: r.ic,
+      frequency: r.frequency,
+      ctr: r.ctr,
+      cpc: r.cpc,
+      cpm: r.cpm,
+      roas: r.spend_usd > 0 ? r.revenue_usd / r.spend_usd : null,
+      videoP25: r.video_p25,
+      videoP50: r.video_p50,
+      videoP75: r.video_p75,
+      videoP95: r.video_p95,
+      video3s: r.video_3s,
+      thruplays: r.thruplays,
+      platform: r.platform,
+      placement: r.placement,
+      ageRange: r.age_range,
+      gender: r.gender,
+      region: r.region,
+      device: r.device,
+      createdAt: new Date(),
+    };
+  });
+
+  const conflictCols = [
+    adDailyStats.adId,
+    adDailyStats.date,
+    adDailyStats.platform,
+    adDailyStats.placement,
+    adDailyStats.ageRange,
+    adDailyStats.gender,
+    adDailyStats.region,
+    adDailyStats.device,
+  ];
+
+  for (const batch of chunks(statValues, BATCH)) {
+    await db
+      .insert(adDailyStats)
+      .values(batch)
+      .onConflictDoUpdate({
+        target: conflictCols,
+        set: {
+          spendUsd: sql`excluded.spend_usd`,
+          revenueUsd: sql`excluded.revenue_usd`,
+          purchases: sql`excluded.purchases`,
+          impressions: sql`excluded.impressions`,
+          clicks: sql`excluded.clicks`,
+          atc: sql`excluded.atc`,
+          ic: sql`excluded.ic`,
+          frequency: sql`excluded.frequency`,
+          ctr: sql`excluded.ctr`,
+          cpc: sql`excluded.cpc`,
+          cpm: sql`excluded.cpm`,
+          roas: sql`excluded.roas`,
+          videoP25: sql`excluded.video_p25`,
+          videoP50: sql`excluded.video_p50`,
+          videoP75: sql`excluded.video_p75`,
+          videoP95: sql`excluded.video_p95`,
+          video3s: sql`excluded.video_3s`,
+          thruplays: sql`excluded.thruplays`,
+        },
+      });
+  }
+
+  // --- 5. Recompute adset_daily_stats (single aggregate query) ---
   const adIdList = Array.from(adIdMap.values());
   const aggRows = await db
     .select({
@@ -269,65 +283,62 @@ export async function ingestMetaRows(args: IngestArgs): Promise<IngestResult> {
     .where(inArray(adDailyStats.adId, adIdList))
     .groupBy(ads.adsetId, adDailyStats.date);
 
-  for (const a of aggRows) {
+  const adsetStatValues: (typeof adsetDailyStats.$inferInsert)[] = aggRows.map((a) => {
     const ctr = a.impressions > 0 ? a.clicks / a.impressions : null;
     const cpm = a.impressions > 0 ? (a.spendUsd * 1000) / a.impressions : null;
-    const frequency =
-      a.freqNum !== null && a.impressions > 0 ? a.freqNum / a.impressions : null;
-    const roas = a.spendUsd > 0 ? a.revenueUsd / a.spendUsd : null;
+    const frequency = a.freqNum !== null && a.impressions > 0 ? a.freqNum / a.impressions : null;
+    return {
+      id: newId("astat"),
+      adsetId: a.adsetId,
+      date: a.date,
+      spendUsd: a.spendUsd,
+      revenueUsd: a.revenueUsd,
+      purchases: a.purchases,
+      impressions: a.impressions,
+      clicks: a.clicks,
+      ctr,
+      cpm,
+      frequency,
+      roas: a.spendUsd > 0 ? a.revenueUsd / a.spendUsd : null,
+      createdAt: new Date(),
+    };
+  });
 
+  for (const batch of chunks(adsetStatValues, BATCH)) {
     await db
       .insert(adsetDailyStats)
-      .values({
-        id: newId("astat"),
-        adsetId: a.adsetId,
-        date: a.date,
-        spendUsd: a.spendUsd,
-        revenueUsd: a.revenueUsd,
-        purchases: a.purchases,
-        impressions: a.impressions,
-        clicks: a.clicks,
-        ctr,
-        cpm,
-        frequency,
-        roas,
-        createdAt: new Date(),
-      })
+      .values(batch)
       .onConflictDoUpdate({
         target: [adsetDailyStats.adsetId, adsetDailyStats.date],
         set: {
-          spendUsd: a.spendUsd,
-          revenueUsd: a.revenueUsd,
-          purchases: a.purchases,
-          impressions: a.impressions,
-          clicks: a.clicks,
-          ctr,
-          cpm,
-          frequency,
-          roas,
+          spendUsd: sql`excluded.spend_usd`,
+          revenueUsd: sql`excluded.revenue_usd`,
+          purchases: sql`excluded.purchases`,
+          impressions: sql`excluded.impressions`,
+          clicks: sql`excluded.clicks`,
+          ctr: sql`excluded.ctr`,
+          cpm: sql`excluded.cpm`,
+          frequency: sql`excluded.frequency`,
+          roas: sql`excluded.roas`,
         },
       });
   }
 
-  // --- 6. Load brand economics + brand row → thresholds ---
+  // --- 6. Brand economics + thresholds ---
   const [econ] = await db
     .select()
     .from(brandEconomics)
     .where(eq(brandEconomics.brandId, brandId))
     .orderBy(sql`${brandEconomics.version} DESC`)
     .limit(1);
-  if (!econ) {
-    throw new Error(`Brand ${brandId} has no economics configured`);
-  }
+  if (!econ) throw new Error(`Brand ${brandId} has no economics configured`);
 
   const [brandRow] = await db
     .select({ exchangeRate: brands.exchangeRate })
     .from(brands)
     .where(eq(brands.id, brandId))
     .limit(1);
-  if (!brandRow) {
-    throw new Error(`Brand ${brandId} not found`);
-  }
+  if (!brandRow) throw new Error(`Brand ${brandId} not found`);
 
   const thresholds = calculateBrandThresholds({
     aov_mxn: econ.aovMxn,
@@ -341,7 +352,7 @@ export async function ingestMetaRows(args: IngestArgs): Promise<IngestResult> {
     exchange_rate: brandRow.exchangeRate,
   });
 
-  // --- 7. Run rules engine over ALL ads of the brand ---
+  // --- 7. Rules engine — single aggregate query per entity type ---
   const allAdsOfBrand = await db
     .select({
       adId: ads.id,
@@ -351,6 +362,7 @@ export async function ingestMetaRows(args: IngestArgs): Promise<IngestResult> {
       purchases: sql<number>`COALESCE(SUM(${adDailyStats.purchases}), 0)`.as("p"),
       frequency: sql<number | null>`MAX(${adDailyStats.frequency})`.as("freq"),
       days: sql<number>`COUNT(DISTINCT ${adDailyStats.date})`.as("days"),
+      daysAboveMin: sql<number>`COUNT(DISTINCT CASE WHEN ${adDailyStats.roas} >= ${thresholds.min_roas} THEN ${adDailyStats.date} END)`.as("dam"),
     })
     .from(ads)
     .innerJoin(adsets, eq(adsets.id, ads.adsetId))
@@ -367,20 +379,9 @@ export async function ingestMetaRows(args: IngestArgs): Promise<IngestResult> {
       purchases: r.purchases,
       frequency: r.frequency ?? undefined,
       days_with_data: r.days,
-      days_with_roas_above_min: 0, // enriched below
+      days_with_roas_above_min: Number(r.daysAboveMin),
     },
   }));
-
-  // Enrich days_with_roas_above_min per ad
-  for (const input of adInputs) {
-    const daysRows = await db
-      .select({ date: adDailyStats.date, roas: adDailyStats.roas })
-      .from(adDailyStats)
-      .where(eq(adDailyStats.adId, input.ad_id));
-    input.perf.days_with_roas_above_min = daysRows.filter(
-      (d) => d.roas !== null && d.roas >= thresholds.min_roas,
-    ).length;
-  }
 
   const allAdsetsOfBrand = await db
     .select({
@@ -389,35 +390,26 @@ export async function ingestMetaRows(args: IngestArgs): Promise<IngestResult> {
       revenue: sql<number>`COALESCE(SUM(${adsetDailyStats.revenueUsd}), 0)`.as("r"),
       purchases: sql<number>`COALESCE(SUM(${adsetDailyStats.purchases}), 0)`.as("p"),
       days: sql<number>`COUNT(DISTINCT ${adsetDailyStats.date})`.as("d"),
+      daysAboveMin: sql<number>`COUNT(DISTINCT CASE WHEN ${adsetDailyStats.roas} >= ${thresholds.min_roas} THEN ${adsetDailyStats.date} END)`.as("dam"),
+      activeAds: sql<number>`COUNT(DISTINCT ${ads.id})`.as("aa"),
     })
     .from(adsets)
     .leftJoin(adsetDailyStats, eq(adsetDailyStats.adsetId, adsets.id))
+    .leftJoin(ads, eq(ads.adsetId, adsets.id))
     .where(eq(adsets.accountId, accountId))
     .groupBy(adsets.id);
 
-  const adsetInputs: AdsetInput[] = [];
-  for (const row of allAdsetsOfBrand) {
-    const sustained = await db
-      .select({ count: sql<number>`COUNT(*)`.as("c") })
-      .from(adsetDailyStats)
-      .where(
-        and(
-          eq(adsetDailyStats.adsetId, row.adsetId),
-          sql`${adsetDailyStats.roas} >= ${thresholds.min_roas}`,
-        ),
-      );
-    adsetInputs.push({
-      adset_id: row.adsetId,
-      perf: {
-        total_spend_usd: row.spend,
-        total_revenue_usd: row.revenue,
-        total_purchases: row.purchases,
-        days_with_data: row.days,
-        days_with_roas_above_min: Number(sustained[0]?.count ?? 0),
-        active_ads_count: 0, // informational only
-      },
-    });
-  }
+  const adsetInputs: AdsetInput[] = allAdsetsOfBrand.map((row) => ({
+    adset_id: row.adsetId,
+    perf: {
+      total_spend_usd: row.spend,
+      total_revenue_usd: row.revenue,
+      total_purchases: row.purchases,
+      days_with_data: row.days,
+      days_with_roas_above_min: Number(row.daysAboveMin),
+      active_ads_count: Number(row.activeAds),
+    },
+  }));
 
   const totalSpend = allAdsetsOfBrand.reduce((s, a) => s + a.spend, 0);
   const totalRev = allAdsetsOfBrand.reduce((s, a) => s + a.revenue, 0);
@@ -430,7 +422,7 @@ export async function ingestMetaRows(args: IngestArgs): Promise<IngestResult> {
     account_roas: accountRoas,
   });
 
-  // --- 8. Persist recommendations + ad verdicts + upload record ---
+  // --- 8. Persist upload record + recommendations + verdicts ---
   const uploadId = newId("upload");
   await db.insert(csvUploads).values({
     id: uploadId,
@@ -445,57 +437,56 @@ export async function ingestMetaRows(args: IngestArgs): Promise<IngestResult> {
     createdAt: new Date(),
   });
 
-  for (const rec of engineOutput.ads) {
-    await db.insert(recommendations).values({
+  const recValues: (typeof recommendations.$inferInsert)[] = [
+    ...engineOutput.ads.map((rec) => ({
       id: newId("rec"),
       brandId,
       uploadId,
-      entityType: "ad",
+      entityType: "ad" as const,
       entityId: rec.ad_id,
       action: rec.action,
       reason: rec.reason,
       metricsSnapshot: JSON.stringify(rec.metrics),
       executed: 0,
       createdAt: new Date(),
-    });
-    // Update ad's verdict cache
+    })),
+    ...engineOutput.adsets.map((rec) => ({
+      id: newId("rec"),
+      brandId,
+      uploadId,
+      entityType: "adset" as const,
+      entityId: rec.adset_id,
+      action: rec.action.toLowerCase(),
+      reason: rec.reason,
+      metricsSnapshot: JSON.stringify({ ...rec.metrics, budget_change_pct: rec.budget_change_pct }),
+      executed: 0,
+      createdAt: new Date(),
+    })),
+  ];
+
+  for (const batch of chunks(recValues, BATCH)) {
+    await db.insert(recommendations).values(batch);
+  }
+
+  // Update verdict cache on ads (batched via individual updates — small N)
+  for (const rec of engineOutput.ads) {
     await db
       .update(ads)
       .set({
         verdict: rec.verdict,
         verdictReason: rec.reason,
         killedAt:
-          rec.verdict === "LOSER" || rec.verdict === "KILLED"
-            ? new Date()
-            : undefined,
+          rec.verdict === "LOSER" || rec.verdict === "KILLED" ? new Date() : undefined,
         updatedAt: new Date(),
       })
       .where(eq(ads.id, rec.ad_id));
-  }
-
-  for (const rec of engineOutput.adsets) {
-    await db.insert(recommendations).values({
-      id: newId("rec"),
-      brandId,
-      uploadId,
-      entityType: "adset",
-      entityId: rec.adset_id,
-      action: rec.action.toLowerCase(),
-      reason: rec.reason,
-      metricsSnapshot: JSON.stringify({
-        ...rec.metrics,
-        budget_change_pct: rec.budget_change_pct,
-      }),
-      executed: 0,
-      createdAt: new Date(),
-    });
   }
 
   return {
     uploadId,
     adsetsUpserted,
     adsUpserted,
-    statsInserted,
+    statsInserted: statValues.length,
     recommendations: {
       ads: engineOutput.ads.length,
       adsets: engineOutput.adsets.length,
