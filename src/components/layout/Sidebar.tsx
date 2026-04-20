@@ -5,7 +5,6 @@ import { usePathname } from "next/navigation";
 import { UserButton, useUser } from "@clerk/nextjs";
 import {
   LayoutDashboard,
-  Target,
   Palette,
   History,
   Upload,
@@ -14,11 +13,10 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
-import { NAV } from "@/lib/utils/nav";
+import { NAV, type NavItem } from "@/lib/utils/nav";
 
 const ICONS: Record<string, LucideIcon> = {
   LayoutDashboard,
-  Target,
   Palette,
   History,
   Upload,
@@ -28,6 +26,23 @@ const ICONS: Record<string, LucideIcon> = {
 export function Sidebar({ brands }: { brands: Array<{ slug: string; name: string }> }) {
   const pathname = usePathname();
   const { user } = useUser();
+
+  // Extract active brand slug from the first path segment, if it matches a known brand.
+  const firstSegment = pathname.split("/").filter(Boolean)[0] ?? "";
+  const activeBrandSlug = brands.some((b) => b.slug === firstSegment)
+    ? firstSegment
+    : brands[0]?.slug ?? "";
+
+  const resolvedNav = NAV.filter((item) => {
+    // Hide brand-scoped items if user has no brands
+    if (item.brandScoped && !activeBrandSlug) return false;
+    return true;
+  }).map((item) => ({
+    ...item,
+    resolvedHref: item.brandScoped
+      ? `/${activeBrandSlug}${item.href}`
+      : item.href,
+  }));
 
   return (
     <aside className="flex h-screen w-60 flex-col border-r border-border bg-bg-raised">
@@ -39,9 +54,21 @@ export function Sidebar({ brands }: { brands: Array<{ slug: string; name: string
 
       {/* Nav */}
       <nav className="flex-1 overflow-y-auto px-2 py-4">
-        <SidebarGroup title="General" items={NAV.filter((i) => i.section === "main")} pathname={pathname} />
-        <SidebarGroup title="Workspace" items={NAV.filter((i) => i.section === "workspace")} pathname={pathname} />
-        <SidebarGroup title="Operaciones" items={NAV.filter((i) => i.section === "ops")} pathname={pathname} />
+        <SidebarGroup
+          title="General"
+          items={resolvedNav.filter((i) => i.section === "main")}
+          pathname={pathname}
+        />
+        <SidebarGroup
+          title="Workspace"
+          items={resolvedNav.filter((i) => i.section === "workspace")}
+          pathname={pathname}
+        />
+        <SidebarGroup
+          title="Operaciones"
+          items={resolvedNav.filter((i) => i.section === "ops")}
+          pathname={pathname}
+        />
 
         {brands.length > 0 && (
           <div className="mt-6">
@@ -49,7 +76,7 @@ export function Sidebar({ brands }: { brands: Array<{ slug: string; name: string
               Marcas
             </p>
             {brands.map((b) => {
-              const active = pathname === `/${b.slug}`;
+              const active = firstSegment === b.slug;
               return (
                 <Link
                   key={b.slug}
@@ -86,13 +113,15 @@ export function Sidebar({ brands }: { brands: Array<{ slug: string; name: string
   );
 }
 
+type ResolvedNavItem = NavItem & { resolvedHref: string };
+
 function SidebarGroup({
   title,
   items,
   pathname,
 }: {
   title: string;
-  items: typeof NAV;
+  items: ResolvedNavItem[];
   pathname: string;
 }) {
   if (items.length === 0) return null;
@@ -103,12 +132,11 @@ function SidebarGroup({
       </p>
       {items.map((item) => {
         const Icon = ICONS[item.icon] ?? LayoutDashboard;
-        const active =
-          item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
+        const active = isActive(pathname, item);
         return (
           <Link
-            key={item.href}
-            href={item.href}
+            key={item.resolvedHref}
+            href={item.resolvedHref}
             className={cn(
               "flex items-center gap-3 rounded-md px-3 py-2 text-sm transition",
               active
@@ -123,4 +151,12 @@ function SidebarGroup({
       })}
     </div>
   );
+}
+
+function isActive(pathname: string, item: ResolvedNavItem): boolean {
+  if (item.brandScoped && item.href === "") {
+    // Dashboard = exact match on /{brandSlug}
+    return pathname === item.resolvedHref;
+  }
+  return pathname === item.resolvedHref || pathname.startsWith(item.resolvedHref + "/");
 }

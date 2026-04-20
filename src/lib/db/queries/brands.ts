@@ -66,6 +66,15 @@ export async function getLatestUpload(brandId: string) {
   return row ?? null;
 }
 
+export async function getBrandUploads(brandId: string, limit = 50) {
+  return db
+    .select()
+    .from(csvUploads)
+    .where(eq(csvUploads.brandId, brandId))
+    .orderBy(desc(csvUploads.createdAt))
+    .limit(limit);
+}
+
 export async function getRecommendationsForUpload(brandId: string, uploadId: string) {
   return db
     .select()

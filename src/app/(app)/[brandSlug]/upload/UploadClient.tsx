@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Upload as UploadIcon,
@@ -10,12 +10,6 @@ import {
   Info,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
-
-interface Brand {
-  id: string;
-  slug: string;
-  name: string;
-}
 
 interface UploadResult {
   ok: boolean;
@@ -28,27 +22,22 @@ interface UploadResult {
   parseWarnings?: string[];
 }
 
-export default function UploadPage() {
+export function UploadClient({
+  brandSlug,
+  brandName,
+}: {
+  brandSlug: string;
+  brandName: string;
+}) {
   const router = useRouter();
-  const [brands, setBrands] = useState<Brand[]>([]);
-  const [brandSlug, setBrandSlug] = useState<string>("");
   const [file, setFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<UploadResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    fetch("/api/brands")
-      .then((r) => r.json())
-      .then((d) => {
-        setBrands(d.brands ?? []);
-        if (d.brands?.[0]?.slug) setBrandSlug(d.brands[0].slug);
-      });
-  }, []);
-
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!file || !brandSlug) return;
+    if (!file) return;
     setSubmitting(true);
     setError(null);
     setResult(null);
@@ -76,7 +65,7 @@ export default function UploadPage() {
       <header className="flex items-center gap-3">
         <UploadIcon className="h-7 w-7 text-verdict-promising" />
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Carga de datos</h1>
+          <h1 className="text-3xl font-bold tracking-tight">Carga de datos — {brandName}</h1>
           <p className="mt-1 text-text-secondary">
             Exporta desde Meta Ads Manager. Detectamos automáticamente si es
             desglose por día o agregado por período.
@@ -88,27 +77,6 @@ export default function UploadPage() {
         onSubmit={handleSubmit}
         className="space-y-6 rounded-lg border border-border bg-bg-raised p-6"
       >
-        <div>
-          <label className="mb-2 block text-sm font-medium text-text-secondary">
-            Marca
-          </label>
-          <select
-            value={brandSlug}
-            onChange={(e) => setBrandSlug(e.target.value)}
-            className="w-full rounded-md border border-border bg-bg px-3 py-2 text-sm focus:border-verdict-promising focus:outline-none"
-            required
-          >
-            <option value="" disabled>
-              Elige una marca…
-            </option>
-            {brands.map((b) => (
-              <option key={b.id} value={b.slug}>
-                {b.name}
-              </option>
-            ))}
-          </select>
-        </div>
-
         <div>
           <label className="mb-2 block text-sm font-medium text-text-secondary">
             Archivo CSV
@@ -143,7 +111,7 @@ export default function UploadPage() {
           </label>
         </div>
 
-        <Button type="submit" disabled={!file || !brandSlug || submitting} size="lg">
+        <Button type="submit" disabled={!file || submitting} size="lg">
           {submitting ? "Procesando…" : "Subir y analizar"}
         </Button>
 
