@@ -33,6 +33,7 @@ export interface AdsetCardProps {
   currency?: DisplayCurrency;
   exchangeRate?: number;
   initiallyOpen?: boolean;
+  inactive?: boolean;
 }
 
 function roasColorClass(roas: number, minRoas: number): string {
@@ -53,6 +54,7 @@ export function AdsetCard({
   currency = "USD",
   exchangeRate = 1,
   initiallyOpen = false,
+  inactive = false,
 }: AdsetCardProps) {
   const [open, setOpen] = useState(initiallyOpen);
   const roasClass = roasColorClass(adset.roas, minRoas);
@@ -60,7 +62,10 @@ export function AdsetCard({
   const fmt = (usd: number) => formatMoney(usd, currency, exchangeRate);
 
   return (
-    <div className="overflow-hidden rounded-lg border border-border bg-bg-raised">
+    <div className={cn(
+      "overflow-hidden rounded-lg border bg-bg-raised",
+      inactive ? "border-border/40 opacity-60" : "border-border",
+    )}>
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}

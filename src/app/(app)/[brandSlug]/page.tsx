@@ -19,6 +19,7 @@ import { calculateBrandThresholds } from "@/lib/rules-engine";
 import { classifyAdset } from "@/lib/rules-engine/adset-classifier";
 import { parseRange, resolveRange, RANGE_LABELS } from "@/lib/utils/date-range";
 import { formatInt, formatMoney, formatRoas } from "@/lib/utils/format";
+import { InactiveAdsetsSection } from "@/components/ads/InactiveAdsetsSection";
 
 export default async function BrandDashboard({
   params,
@@ -99,7 +100,15 @@ export default async function BrandDashboard({
     list.sort((a, b) => b.spendUsd - a.spendUsd);
   }
 
-  const visibleAdsets = adsetRows.filter((a) => a.spendUsd > 0);
+  const activeAdsets = adsetRows.filter((a) => a.spendUsd > 0);
+  const inactiveAdsets = adsetRows.filter((a) => a.spendUsd === 0);
+
+  // Build a plain-object map for InactiveAdsetsSection (serialisable across the server/client boundary)
+  const adsByAdsetObj: Record<string, typeof adRows> = {};
+  for (const [key, val] of adsByAdset.entries()) {
+    adsByAdsetObj[key] = val;
+  }
+
   const accountRoas = rollup.roas;
   const accountUnderMin = thresholds && accountRoas > 0 && accountRoas < minRoas;
 
@@ -153,15 +162,15 @@ export default async function BrandDashboard({
 
       <section>
         <h2 className="mb-3 text-xl font-semibold">
-          Conjuntos ({visibleAdsets.length})
+          Conjuntos ({activeAdsets.length})
         </h2>
-        {visibleAdsets.length === 0 ? (
+        {activeAdsets.length === 0 ? (
           <div className="rounded-lg border border-dashed border-border bg-bg-raised p-8 text-center text-sm text-text-secondary">
             Sin gasto registrado en el período seleccionado.
           </div>
         ) : (
           <div className="space-y-2">
-            {visibleAdsets.map((adset) => {
+            {activeAdsets.map((adset) => {
               const classification = thresholds
                 ? classifyAdset(
                     {
@@ -192,6 +201,14 @@ export default async function BrandDashboard({
             })}
           </div>
         )}
+        <InactiveAdsetsSection
+          adsets={inactiveAdsets}
+          adsByAdset={adsByAdsetObj}
+          minRoas={minRoas}
+          currency={currency}
+          exchangeRate={exchangeRate}
+          brandSlug={brand.slug}
+        />
       </section>
     </div>
   );
