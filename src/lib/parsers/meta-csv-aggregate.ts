@@ -114,24 +114,61 @@ const COL_ALIASES: Record<string, string[]> = {
   thruplays: ["thruplays", "thruplay", "reproducciones de thruplay"],
   delivery: ["entrega del anuncio", "ad delivery"],
   ad_id: ["identificador del anuncio", "ad id"],
-  adset_id: ["identificador del conjunto", "ad set id", "adset id"],
+  adset_id: [
+    "identificador del conjunto de anuncios", // full form used in daily-breakdown exports
+    "identificador del conjunto",
+    "ad set id",
+    "adset id",
+  ],
   adset_name: ["nombre del conjunto de anuncios", "ad set name", "adset name"],
   campaign_name: ["nombre de la campana", "nombre de la campaña", "campaign name"],
 };
 
 /**
  * Detect whether a CSV is the aggregate export variant (no `Día`, has `Inicio del informe`).
- * Consumers can use this to decide which parser to call.
+ *
+ * Meta Ads can produce two CSV shapes that both lack a "Día" column:
+ *   (A) True aggregate: one row per ad covering the whole selected period → start ≠ end
+ *   (B) Daily breakdown with period columns: one row per ad per day → start = end
+ *
+ * We distinguish them by peeking at the first non-empty data row.
  */
 export function isAggregateMetaCsv(csv: string): boolean {
-  // Cheap scan of the first line.
-  const firstLine = csv.replace(/^\uFEFF/, "").split(/\r?\n/)[0] ?? "";
-  const headers = firstLine
-    .split(",")
-    .map((h) => normalizeHeader(h.replace(/^"|"$/g, "")));
-  const hasDay = headers.includes("dia") || headers.includes("day") || headers.includes("fecha");
+  const clean = csv.replace(/^\uFEFF/, "");
+  const firstLine = clean.split(/\r?\n/)[0] ?? "";
+  const rawHeaders = firstLine.split(",").map((h) => h.replace(/^"|"$/g, "").trim());
+  const headers = rawHeaders.map(normalizeHeader);
+
+  const hasDay =
+    headers.includes("dia") || headers.includes("day") || headers.includes("fecha");
+  if (hasDay) return false;
+
   const hasPeriod = headers.includes("inicio del informe");
-  return !hasDay && hasPeriod;
+  if (!hasPeriod) return false;
+
+  // Find column positions for start/end dates.
+  const startIdx = headers.indexOf("inicio del informe");
+  const endIdx = headers.indexOf("fin del informe");
+
+  if (startIdx !== -1 && endIdx !== -1) {
+    const lines = clean.split(/\r?\n/);
+    for (let i = 1; i < Math.min(8, lines.length); i++) {
+      const line = (lines[i] ?? "").trim();
+      if (!line) continue;
+      // Dates in Meta exports are always unquoted and appear before any quoted ad names.
+      const cells = line.split(",");
+      const start = (cells[startIdx] ?? "").replace(/^"|"$/g, "").trim();
+      const end = (cells[endIdx] ?? "").replace(/^"|"$/g, "").trim();
+      if (start && end) {
+        // (A) start ≠ end → real aggregate; (B) start = end → daily with period cols
+        return start !== end;
+      }
+    }
+  }
+
+  // Could not determine from data rows — fall back to assuming aggregate
+  // (safer than crashing with "missing Día column" in the daily parser).
+  return true;
 }
 
 export function parseMetaAggregateCsv(

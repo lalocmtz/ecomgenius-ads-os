@@ -11,7 +11,7 @@
  * All hot loops use batched SQL to stay within Vercel's 10s function limit.
  */
 
-import { and, eq, sql, inArray } from "drizzle-orm";
+import { and, eq, sql, inArray, gte, lte } from "drizzle-orm";
 import type { db as Db } from "@/lib/db/client";
 import { batchSql } from "@/lib/db/client";
 import {
@@ -266,7 +266,30 @@ export async function ingestMetaRows(args: IngestArgs): Promise<IngestResult> {
       });
   }
 
-  // --- 5. Recompute adset_daily_stats (single aggregate query) ---
+  // --- 5. Wipe adset_daily_stats for this account's date range before recomputing ---
+  // This prevents stale rows from a previous upload (e.g. wrong "aggregate-default"
+  // adset from a misdetected CSV) from polluting the dashboard after a re-upload.
+  const allAccountAdsets = await db
+    .select({ id: adsets.id })
+    .from(adsets)
+    .where(eq(adsets.accountId, accountId));
+  const allAccountAdsetIds = allAccountAdsets.map((r) => r.id);
+
+  if (allAccountAdsetIds.length > 0) {
+    for (const batch of chunks(allAccountAdsetIds, BATCH)) {
+      await db
+        .delete(adsetDailyStats)
+        .where(
+          and(
+            inArray(adsetDailyStats.adsetId, batch),
+            gte(adsetDailyStats.date, dateRange.start),
+            lte(adsetDailyStats.date, dateRange.end),
+          ),
+        );
+    }
+  }
+
+  // --- 5b. Recompute adset_daily_stats (single aggregate query) ---
   const adIdList = Array.from(adIdMap.values());
   const aggRows = await db
     .select({
