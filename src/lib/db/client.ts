@@ -39,4 +39,13 @@ export const db = new Proxy({} as LibSQLDatabase<typeof schema>, {
   },
 });
 
+/**
+ * Send multiple SQL statements to Turso in a single HTTP round-trip.
+ * Do NOT use the `sqlite` Proxy for this — libSQL's Client uses private class
+ * fields that break when `this` is a Proxy rather than the real instance.
+ */
+export function batchSql(stmts: Parameters<Client["batch"]>[0]) {
+  return init().sqlite.batch(stmts);
+}
+
 export * from "./schema";

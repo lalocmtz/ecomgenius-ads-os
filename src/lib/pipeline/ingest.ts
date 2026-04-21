@@ -13,7 +13,7 @@
 
 import { and, eq, sql, inArray } from "drizzle-orm";
 import type { db as Db } from "@/lib/db/client";
-import { sqlite } from "@/lib/db/client";
+import { batchSql } from "@/lib/db/client";
 import {
   ads,
   adsets,
@@ -474,7 +474,7 @@ export async function ingestMetaRows(args: IngestArgs): Promise<IngestResult> {
   if (engineOutput.ads.length > 0) {
     const now = new Date().toISOString();
     for (const batch of chunks(engineOutput.ads, BATCH)) {
-      await sqlite.batch(
+      await batchSql(
         batch.map((rec) => ({
           sql: `UPDATE "ads" SET "verdict" = ?, "verdict_reason" = ?, "killed_at" = ?, "updated_at" = ? WHERE "id" = ?`,
           args: [
