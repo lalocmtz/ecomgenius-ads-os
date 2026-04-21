@@ -3,6 +3,7 @@ import { auth } from "@clerk/nextjs/server";
 import { History } from "lucide-react";
 import { getBrandBySlug, getBrandUploads } from "@/lib/db/queries/brands";
 import { formatInt } from "@/lib/utils/format";
+import { ResetButton } from "@/components/brand/ResetButton";
 
 export default async function HistorialPage({
   params,
@@ -18,14 +19,17 @@ export default async function HistorialPage({
 
   return (
     <div className="space-y-6">
-      <header className="flex items-center gap-3">
-        <History className="h-7 w-7 text-verdict-promising" />
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Historial — {brand.name}</h1>
-          <p className="mt-1 text-text-secondary">
-            Cada subida de CSV queda registrada con rango de fechas y métricas de ingesta.
-          </p>
+      <header className="flex flex-wrap items-start justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <History className="h-7 w-7 text-verdict-promising" />
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight">Historial — {brand.name}</h1>
+            <p className="mt-1 text-text-secondary">
+              Cada subida de CSV queda registrada con rango de fechas y métricas de ingesta.
+            </p>
+          </div>
         </div>
+        <ResetButton brandSlug={brand.slug} brandName={brand.name} />
       </header>
 
       {uploads.length === 0 ? (
