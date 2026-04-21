@@ -46,6 +46,20 @@ export function UploadClient({
       fd.append("file", file);
       fd.append("brandSlug", brandSlug);
       const r = await fetch("/api/csv/upload", { method: "POST", body: fd });
+      const contentType = r.headers.get("content-type") ?? "";
+      if (!contentType.includes("application/json")) {
+        const text = await r.text();
+        const isTimeout =
+          text.includes("TIMEOUT") ||
+          text.includes("timeout") ||
+          text.includes("An error occurred");
+        setError(
+          isTimeout
+            ? "La carga tardó demasiado (límite 10 s del plan). Intenta con un CSV más pequeño o divide el rango de fechas."
+            : `Error del servidor: ${text.slice(0, 200)}`,
+        );
+        return;
+      }
       const data = await r.json();
       if (!r.ok) {
         setError(data.error ?? "Upload failed");

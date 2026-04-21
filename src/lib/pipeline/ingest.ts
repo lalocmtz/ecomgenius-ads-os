@@ -13,6 +13,7 @@
 
 import { and, eq, sql, inArray } from "drizzle-orm";
 import type { db as Db } from "@/lib/db/client";
+import { sqlite } from "@/lib/db/client";
 import {
   ads,
   adsets,
@@ -57,7 +58,7 @@ export interface IngestResult {
   dateRange: { start: string; end: string };
 }
 
-const BATCH = 200; // rows per INSERT statement (safe for SQLite param limits)
+const BATCH = 500; // rows per INSERT statement (SQLite limit ~32 k params; 500 × 25 cols = 12.5 k — safe)
 
 function chunks<T>(arr: T[], size: number): T[][] {
   const out: T[][] = [];
@@ -468,18 +469,26 @@ export async function ingestMetaRows(args: IngestArgs): Promise<IngestResult> {
     await db.insert(recommendations).values(batch);
   }
 
-  // Update verdict cache on ads (batched via individual updates — small N)
-  for (const rec of engineOutput.ads) {
-    await db
-      .update(ads)
-      .set({
-        verdict: rec.verdict,
-        verdictReason: rec.reason,
-        killedAt:
-          rec.verdict === "LOSER" || rec.verdict === "KILLED" ? new Date() : undefined,
-        updatedAt: new Date(),
-      })
-      .where(eq(ads.id, rec.ad_id));
+  // Update verdict cache on all ads — use sqlite.batch() so every UPDATE goes in a single
+  // HTTP round-trip to Turso instead of N sequential 50 ms round-trips.
+  if (engineOutput.ads.length > 0) {
+    const now = new Date().toISOString();
+    for (const batch of chunks(engineOutput.ads, BATCH)) {
+      await sqlite.batch(
+        batch.map((rec) => ({
+          sql: `UPDATE "ads" SET "verdict" = ?, "verdict_reason" = ?, "killed_at" = ?, "updated_at" = ? WHERE "id" = ?`,
+          args: [
+            rec.verdict,
+            rec.reason,
+            rec.verdict === "LOSER" || rec.verdict === "KILLED"
+              ? Date.now()
+              : null,
+            Date.now(),
+            rec.ad_id,
+          ],
+        })),
+      );
+    }
   }
 
   return {
