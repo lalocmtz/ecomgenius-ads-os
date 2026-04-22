@@ -110,6 +110,10 @@ const COL_ALIASES: Record<string, string[]> = {
     "amount spent",
     "spend",
   ],
+  spend_mxn: [
+    "importe gastado (mxn)",
+    "importe gastado mxn",
+  ],
   purchases: ["compras", "purchases", "website purchases"],
   revenue_usd: [
     "valor de conversion de compras",
@@ -181,6 +185,10 @@ export interface ParseOptions {
   strict?: boolean;
   /** If set, synthesize ad_external_id from (adset_id + ad_name) when column is missing. Default: false. */
   synthesizeMissingIds?: boolean;
+  /** Exchange rate to convert MXN to USD (e.g., 17.5). Default: 1 (no conversion). */
+  exchange_rate?: number;
+  /** Force explicit currency detection instead of inferring from headers. If set to "USD", CSV is treated as USD (no conversion). If set to "MXN", CSV is treated as MXN (applies conversion). Default: undefined (use inference). */
+  forceExplicitCurrency?: "USD" | "MXN";
 }
 
 export function parseMetaCsv(
@@ -203,6 +211,21 @@ export function parseMetaCsv(
 
   const headers = parsed.meta.fields ?? [];
   const colmap = resolveColumns(headers);
+
+  // Detect if CSV is in MXN: either explicit user selection OR intelligent inference from headers
+  // If user explicitly selected currency at upload time, use that
+  // Otherwise, infer by checking if any cost columns have "(MXN)" label
+  // This handles Meta's default export for MXN accounts which only marks OTHER columns
+  // with "(MXN)" (e.g., "CPC (MXN)") but leaves the main spend column as generic "Importe gastado"
+  const isMxnInferred = options.forceExplicitCurrency === "MXN"
+    ? true
+    : options.forceExplicitCurrency === "USD"
+      ? false
+      : headers.some((h) => {
+          const norm = normalizeHeader(h);
+          return norm.includes("mxn") &&
+                 (norm.includes("cpc") || norm.includes("cpm") || norm.includes("costo"));
+        });
 
   if (!colmap.date) {
     throw new Error(
@@ -231,7 +254,7 @@ export function parseMetaCsv(
   parsed.data.forEach((raw, idx) => {
     const lineNum = idx + 2; // +1 for header, +1 for 1-indexed
     try {
-      const row = mapRow(raw, colmap, options);
+      const row = mapRow(raw, colmap, options, isMxnInferred);
       if (!row) {
         // Aggregated rows ("Total de cuenta") or fully-empty rows → skip silently.
         return;
@@ -292,6 +315,7 @@ function mapRow(
   raw: Record<string, string>,
   cm: ColMap,
   options: ParseOptions,
+  isMxnInferred: boolean = false,
 ): MetaRow | null {
   const date = toIsoDate(get(raw, cm.date ?? null));
   if (!date) {
@@ -318,7 +342,42 @@ function mapRow(
     }
   }
 
-  const spend = parseNumber(get(raw, cm.spend_usd ?? null));
+  // Spend: try MXN first (with conversion), then USD
+  let spend: number | null = null;
+  const exchangeRate = options.exchange_rate ?? 1;
+
+  // CRITICAL: Detect if spend column is MXN based on:
+  // 1. Explicit spend_mxn column (has "(MXN)" in header)
+  // 2. OR inferred from other cost columns that have "(MXN)" labels (e.g., "CPC (MXN)", "CPM (MXN)")
+  // This handles Meta's default export for MXN accounts which marks cost columns with "(MXN)"
+  // but leaves the main spend column as generic "Importe gastado"
+  const isMxnCsv = cm.spend_mxn !== null || isMxnInferred;
+
+  if (isMxnCsv) {
+    // First try explicit spend_mxn column if it exists
+    if (cm.spend_mxn !== null) {
+      const spendMxn = parseNumber(get(raw, cm.spend_mxn));
+      if (spendMxn !== null) {
+        spend = spendMxn / exchangeRate;
+      }
+    }
+    // Otherwise use the generic spend_usd column but treat it as MXN if we inferred MXN
+    if (spend === null && isMxnInferred) {
+      const spendMxn = parseNumber(get(raw, cm.spend_usd ?? null));
+      if (spendMxn !== null) {
+        spend = spendMxn / exchangeRate;
+      }
+    }
+  }
+
+  // If no MXN spend found, try USD (either explicit spend_usd or fallback when no MXN detected)
+  if (spend === null) {
+    const spendUsd = parseNumber(get(raw, cm.spend_usd ?? null));
+    if (spendUsd !== null) {
+      spend = spendUsd;
+    }
+  }
+
   if (spend === null) {
     throw new Error(`Spend inválido para ad ${adId}`);
   }

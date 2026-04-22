@@ -196,11 +196,16 @@ export function parseMetaAggregateCsv(
     throw new Error('Columna "Importe gastado" no encontrada (USD o MXN).');
   }
 
-  const currencyDetected: AggregateParseResult["currencyDetected"] = colmap.spend_mxn
-    ? "MXN"
-    : colmap.spend_usd
+  const currencyDetected: AggregateParseResult["currencyDetected"] =
+    options.forceExplicitCurrency === "USD"
       ? "USD"
-      : "unknown";
+      : options.forceExplicitCurrency === "MXN"
+        ? "MXN"
+        : colmap.spend_mxn
+          ? "MXN"
+          : colmap.spend_usd
+            ? "USD"
+            : "unknown";
   const exchangeRate = currencyDetected === "MXN" ? options.exchange_rate : 1;
 
   const rows: MetaRow[] = [];

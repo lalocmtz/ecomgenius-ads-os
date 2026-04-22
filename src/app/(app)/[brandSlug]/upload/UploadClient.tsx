@@ -34,6 +34,7 @@ export function UploadClient({
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<UploadResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [forceCurrency, setForceCurrency] = useState<"USD" | "MXN" | "">("");
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -45,6 +46,9 @@ export function UploadClient({
       const fd = new FormData();
       fd.append("file", file);
       fd.append("brandSlug", brandSlug);
+      if (forceCurrency) {
+        fd.append("forceCurrency", forceCurrency);
+      }
       const r = await fetch("/api/csv/upload", { method: "POST", body: fd });
       const contentType = r.headers.get("content-type") ?? "";
       if (!contentType.includes("application/json")) {
@@ -123,6 +127,51 @@ export function UploadClient({
               className="hidden"
             />
           </label>
+        </div>
+
+        <div>
+          <label className="mb-2 block text-sm font-medium text-text-secondary">
+            Moneda del CSV (Selecciona si sabes la divisa)
+          </label>
+          <div className="flex gap-4">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="radio"
+                name="currency"
+                value="USD"
+                checked={forceCurrency === "USD"}
+                onChange={(e) => setForceCurrency(e.target.value as "USD")}
+                className="rounded"
+              />
+              <span className="text-sm text-text-primary">USD (Dólares)</span>
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="radio"
+                name="currency"
+                value="MXN"
+                checked={forceCurrency === "MXN"}
+                onChange={(e) => setForceCurrency(e.target.value as "MXN")}
+                className="rounded"
+              />
+              <span className="text-sm text-text-primary">MXN (Pesos)</span>
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="radio"
+                name="currency"
+                value=""
+                checked={forceCurrency === ""}
+                onChange={() => setForceCurrency("")}
+                className="rounded"
+              />
+              <span className="text-sm text-text-primary">Auto-detectar</span>
+            </label>
+          </div>
+          <p className="mt-2 text-xs text-text-muted">
+            Si seleccionas una divisa, usaremos esa en lugar de auto-detectar. 
+            USD = no convertir, MXN = convertir a USD usando TC 17.5
+          </p>
         </div>
 
         <Button type="submit" disabled={!file || submitting} size="lg">

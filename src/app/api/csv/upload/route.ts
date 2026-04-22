@@ -24,6 +24,7 @@ export async function POST(req: Request) {
     const formData = await req.formData();
     const file = formData.get("file") as File | null;
     const brandSlug = formData.get("brandSlug") as string | null;
+    const forceCurrency = formData.get("forceCurrency") as string | null;
 
     if (!file) return NextResponse.json({ error: "file is required" }, { status: 400 });
     if (!brandSlug)
@@ -66,6 +67,7 @@ export async function POST(req: Request) {
       const r = parseMetaAggregateCsv(csvText, {
         exchange_rate: brand.exchangeRate,
         min_roas: econ.minRoas,
+        forceExplicitCurrency: forceCurrency as "USD" | "MXN" | undefined,
       });
       rows = r.rows;
       rowsFailed = r.rowsFailed;
@@ -83,7 +85,10 @@ export async function POST(req: Request) {
         `Para aprovechar 100% del motor, re-exporta con: Columnas → Personalizar → agregar "Identificador del anuncio", "Nombre/Identificador del conjunto", "Nombre de la campaña", "Impresiones", "Clics". Luego Desglose → Por día.`,
       );
     } else {
-      const r = parseMetaCsv(csvText);
+      const r = parseMetaCsv(csvText, {
+        exchange_rate: brand.exchangeRate,
+        forceExplicitCurrency: forceCurrency as "USD" | "MXN" | undefined,
+      });
       rows = r.rows;
       rowsFailed = r.rowsFailed;
       failures = r.failures.slice(0, 20);
